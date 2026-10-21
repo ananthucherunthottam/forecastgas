@@ -167,10 +167,11 @@ state = st.sidebar.selectbox("State", required_states, key="sel_state")
 default_gas_day = (today + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
 if default_gas_day not in gas_days:
     default_gas_day = target_month.start_time.strftime("%Y-%m-%d")
-gas_day = st.sidebar.selectbox(
+gas_day = st.sidebar.date_input(
     "Gas Day to forecast",
-    gas_days,
-    index=gas_days.index(default_gas_day),
+    value=pd.Timestamp(default_gas_day).date(),
+    min_value=pd.Timestamp(gas_days[0]).date(),
+    max_value=pd.Timestamp(gas_days[-1]).date(),
     key="sel_gas_day",
 )
 selected_gas_day = pd.Timestamp(gas_day)
@@ -791,11 +792,15 @@ with tab_chat:
             ].to_csv(index=False),
         ]
     )
-    history = st.session_state.setdefault("chat", [])
+    chat_key = f"chat_{state}_{gas_day}"
+    history = st.session_state.setdefault(chat_key, [])
     for role, content in history:
         with st.chat_message(role):
             st.write(content)
-    question = st.chat_input("Ask a question about this forecast")
+    question = st.chat_input(
+        f"Ask about the {gas_day} forecast",
+        key=f"chat_input_{state}_{gas_day}",
+    )
     if question:
         with st.chat_message("user"):
             st.write(question)
@@ -807,8 +812,8 @@ with tab_chat:
             st.write(answer)
         history.append(("user", question))
         history.append(("assistant", answer))
-    if history and st.button("Clear conversation"):
-        st.session_state["chat"] = []
+    if history and st.button("Clear conversation", key=f"clear_{state}_{gas_day}"):
+        st.session_state[chat_key] = []
         st.rerun()
 
 # ======================= Tab 6: Export =======================
