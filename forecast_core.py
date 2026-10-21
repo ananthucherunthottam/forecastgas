@@ -22,7 +22,7 @@ def daily_forecast_table(month_df, temp_shifts, base_daily, whatif_daily):
             "Gas Day": month_df["date"].dt.strftime("%Y-%m-%d"),
             "Expected temperature (F)": month_df["temp_expected"].round(1),
             "Temperature shift (F)": temp_shifts,
-            "Actual forecast (Dth/day)": base_daily.round(1),
+            "Forecast (Dth/day)": base_daily.round(1),
             "What-if forecast (Dth/day)": whatif_daily.round(1),
             "Change (Dth/day)": (whatif_daily - base_daily).round(1),
         }
@@ -104,7 +104,7 @@ def build_nomination_summary(state_data, nominations):
         rows.append(
             {
                 "State": state,
-                "Actual forecast (Dth/day)": forecast,
+                "Forecast (Dth/day)": forecast,
                 "Actual nominations (Dth/day)": nominated,
                 "Forecast minus actual nominations (Dth/day)": forecast - nominated,
                 "Gap (%)": (forecast - nominated) / nominated * 100 if nominated else 0.0,
@@ -148,7 +148,7 @@ def build_sample_customer_breakdown(state_data, nominations):
             rows.append(
                 {
                     "State": state,
-                    "Company / Scheduling Point": f"Sample Scheduling Point {index}",
+                    "Company / Scheduling Point": f"Customer {index}",
                     "Forecast (Dth/day)": customer_forecast,
                     "Actual nominations (Dth/day)": customer_nomination,
                     "Difference (Dth/day)": round(

@@ -289,7 +289,7 @@ baseline_by_state = pd.DataFrame(
     [
         {
             "State": name,
-            "Actual forecast (Dth/day)": rt.baseline_forecast(state_model, state_month),
+            "Forecast (Dth/day)": rt.baseline_forecast(state_model, state_month),
         }
         for name, (state_month, state_model) in state_data.items()
     ]
@@ -431,13 +431,13 @@ with tab_forecast:
             )
             st.caption("Green: small gap. Amber: over half the alert threshold. Red: over it.")
 
-    st.subheader(f"Actual forecast by state, Gas Day {gas_day}")
+    st.subheader(f"Forecast by state, Gas Day {gas_day}")
     st.dataframe(
-        baseline_by_state.style.format({"Actual forecast (Dth/day)": "{:,.1f}"}),
+        baseline_by_state.style.format({"Forecast (Dth/day)": "{:,.1f}"}),
         hide_index=True,
         use_container_width=True,
     )
-    st.subheader(f"Gas-day actual forecast, {state}, {gas_day}")
+    st.subheader(f"Gas-day forecast, {state}, {gas_day}")
     st.caption("Temperature estimates use historical averages unless live weather is on.")
     st.dataframe(
         daily_baseline_by_state[
@@ -455,7 +455,7 @@ with tab_forecast:
     st.dataframe(
         nomination_summary.style.format(
             {
-                "Actual forecast (Dth/day)": "{:,.1f}",
+                "Forecast (Dth/day)": "{:,.1f}",
                 "Actual nominations (Dth/day)": "{:,.1f}",
                 "Forecast minus actual nominations (Dth/day)": "{:+,.1f}",
                 "Gap (%)": "{:+.1f}",
@@ -466,7 +466,7 @@ with tab_forecast:
     )
     st.subheader(f"Customer forecast vs nominations, {state}, Gas Day {gas_day}")
     st.caption(
-        "Sample Scheduling Point rows are illustrative, not real customer records. "
+        "Customer rows are illustrative, not real customer records. "
         "The selected state's totals are allocated by fixed sample shares; use "
         "customer-level data for actual customer comparisons."
     )
@@ -485,7 +485,7 @@ with tab_forecast:
     )
 
     c1, c2, c3 = st.columns(3)
-    c1.metric(f"{state} actual forecast for {gas_day}", f"{base_total:,.1f} Dth")
+    c1.metric(f"{state} forecast for {gas_day}", f"{base_total:,.1f} Dth")
     c2.metric(
         "What-if forecast",
         f"{whatif_total:,.1f} Dth",
@@ -494,7 +494,7 @@ with tab_forecast:
     c3.metric("Change from baseline", f"{whatif_total - base_total:+,.1f} Dth")
     if band_low is not None:
         st.caption(
-            f"Approximate 80% range for the actual forecast: {band_low:,.1f} to "
+            f"Approximate 80% range for the forecast: {band_low:,.1f} to "
             f"{band_high:,.1f} Dth. Based on the 2024 monthly backtest error "
             f"(about {band_sigma:.1f}%); daily error is usually larger, so treat it as a guide."
         )
@@ -502,13 +502,13 @@ with tab_forecast:
     st.subheader(f"Forecast vs actual nominations, {state}, Gas Day {gas_day}")
     n1, n2, n3 = st.columns(3)
     n1.metric("Actual nominations", f"{nominated_daily[0]:,.1f} Dth")
-    n2.metric("Actual forecast", f"{base_daily[0]:,.1f} Dth")
+    n2.metric("Forecast", f"{base_daily[0]:,.1f} Dth")
     n3.metric(
         "Forecast minus actual nominations", f"{forecast_minus_nominated[0]:+,.1f} Dth"
     )
 
     bars = [
-        {"Series": "Actual forecast", "Dth/day": float(base_daily[0])},
+        {"Series": "Forecast", "Dth/day": float(base_daily[0])},
         {"Series": "What-if forecast", "Dth/day": float(whatif_daily[0])},
         {"Series": "Nominations", "Dth/day": float(nominated_daily[0])},
     ]
@@ -528,7 +528,7 @@ with tab_forecast:
     )
     if band_low is not None:
         range_df = pd.DataFrame(
-            [{"Series": "Actual forecast", "low": band_low, "high": band_high}]
+            [{"Series": "Forecast", "low": band_low, "high": band_high}]
         )
         bar_chart = bar_chart + alt.Chart(range_df).mark_rule(size=3, color="black").encode(
             x=alt.X("Series:N", sort=None), y="low:Q", y2="high:Q"
