@@ -65,6 +65,11 @@ def load_data():
     return pd.read_csv(rt.DATA_FILE, parse_dates=["date"])
 
 
+@st.cache_data
+def load_customer_nomination_history():
+    return pd.read_csv("customer_nomination_history.csv", parse_dates=["date"])
+
+
 @st.cache_resource(show_spinner="Training forecast models...")
 def cached_prepare(state_name, month, today_key):
     data = load_data()
@@ -76,11 +81,6 @@ def cached_backtest(state_name):
     data = load_data()
     past = [f"2024-{m:02d}" for m in range(1, 13)]
     return rt.backtest(data[data["state"] == state_name].copy(), past)
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def cached_weather(state_name):
-    return xt.fetch_weather_forecast(state_name)
 
 
 df = load_data()
@@ -115,52 +115,6 @@ for forecast_period in (current_month, target_month):
     )
 gas_days = sorted(gas_days)
 
-# ---------------- Callbacks (run before the page reruns) ----------------
-if "custom_scenarios" not in st.session_state:
-    st.session_state["custom_scenarios"] = []
-
-
-def slider_key():
-    return (
-        f"temperature_shift_{st.session_state['sel_state']}_"
-        f"{st.session_state['sel_gas_day']}"
-    )
-
-
-def add_custom_scenario():
-    name = st.session_state.get("cs_name", "").strip() or "Custom scenario"
-    if not name.lower().endswith("(assumed)"):
-        name += " (assumed)"
-    st.session_state["custom_scenarios"].append(
-        {
-            "name": name,
-            "temp_shift": float(st.session_state.get("cs_temp", 0)),
-            "demand_mult": 1 + float(st.session_state.get("cs_demand", 0)) / 100,
-        }
-    )
-
-
-def clear_custom_scenarios():
-    st.session_state["custom_scenarios"] = []
-
-
-def save_current_scenario():
-    name = st.session_state.get("save_name", "").strip()
-    if name:
-        xt.save_scenario(
-            name,
-            st.session_state.get(slider_key(), 0),
-            st.session_state["custom_scenarios"],
-        )
-
-
-def load_saved_scenario():
-    data = xt.load_saved_scenarios().get(st.session_state.get("saved_choice"))
-    if data:
-        st.session_state[slider_key()] = int(data["temp_shift"])
-        st.session_state["custom_scenarios"] = data.get("custom_scenarios", [])
-
-
 # ---------------- Sidebar controls ----------------
 st.sidebar.header("What-if controls")
 state = st.sidebar.selectbox("State", required_states, key="sel_state")
@@ -177,13 +131,6 @@ gas_day = st.sidebar.date_input(
 gas_day = pd.Timestamp(gas_day).strftime("%Y-%m-%d")
 selected_gas_day = pd.Timestamp(gas_day)
 month = str(selected_gas_day.to_period("M"))
-show_actual = st.sidebar.checkbox("Show what actually happened (hindsight)", value=False)
-use_live_weather = st.sidebar.checkbox(
-    "Use live weather forecast (Open-Meteo, next 16 days)",
-    value=False,
-    help="Replaces the historical-average temperature when the gas day is within "
-    "the next 16 days. Needs internet access to open-meteo.com.",
-)
 alert_threshold = st.sidebar.number_input(
     "Alert when forecast differs from nominations by more than (%)",
     min_value=0.5,
@@ -191,58 +138,6 @@ alert_threshold = st.sidebar.number_input(
     value=5.0,
     step=0.5,
 )
-st.sidebar.caption(
-    "Temperatures use historical Open-Meteo data when available and synthetic data "
-    "as a fallback. Gas usage is synthetic and illustrative, expressed in Dth/day. "
-    "Customer-behaviour scenarios are assumptions. Sample nominations are generated "
-    "for each state and day unless you upload real ones."
-)
-
-with st.sidebar.expander("Custom scenario"):
-    st.text_input("Name", key="cs_name", placeholder="Cold snap plus growth")
-    st.number_input("Temperature shift (F)", -30.0, 30.0, 0.0, 1.0, key="cs_temp")
-    st.number_input("Demand change (%)", -50.0, 50.0, 0.0, 1.0, key="cs_demand")
-    c_add, c_clear = st.columns(2)
-    c_add.button("Add", on_click=add_custom_scenario)
-    c_clear.button("Clear all", on_click=clear_custom_scenarios)
-    for cs in st.session_state["custom_scenarios"]:
-        st.caption(
-            f"{cs['name']}: {cs['temp_shift']:+.0f} F, "
-            f"{(cs['demand_mult'] - 1) * 100:+.0f}% demand"
-        )
-
-with st.sidebar.expander("Saved scenarios"):
-    st.text_input("Save current settings as", key="save_name")
-    st.button("Save", on_click=save_current_scenario)
-    saved_names = list(xt.load_saved_scenarios())
-    if saved_names:
-        st.selectbox("Load", saved_names, key="saved_choice")
-        st.button("Load selected", on_click=load_saved_scenario)
-    else:
-        st.caption("No saved scenarios yet.")
-
-with st.sidebar.expander("Real nominations (upload)"):
-    st.caption("CSV or Excel with columns: date, state, nominated_dth")
-    nomination_file = st.file_uploader(
-        "Nominations file", type=["csv", "xlsx"], label_visibility="collapsed"
-    )
-
-with st.sidebar.expander("LLM connection"):
-    key_input = st.text_input("LLM API key (optional)", type="password")
-    if key_input:
-        os.environ["LLM_API_KEY"] = key_input
-    st.caption(f"Model: {ex.MODEL}")
-    st.caption("Key found." if os.environ.get("LLM_API_KEY") else "No key set.")
-
-extra_scenarios = st.session_state["custom_scenarios"]
-
-uploaded_nominations = None
-if nomination_file is not None:
-    with safe("Nominations upload"):
-        uploaded_nominations = xt.parse_uploaded_nominations(
-            nomination_file, nomination_file.name
-        )
-
 # ---------------- Build forecasts ----------------
 try:
     monthly_state_data = {
@@ -253,16 +148,7 @@ except Exception as exc:
     st.error(f"Could not build the forecast: {exc}")
     st.stop()
 
-weather_by_state = {}
-weather_note = None
-if use_live_weather:
-    try:
-        weather_by_state = {name: cached_weather(name) for name in required_states}
-    except Exception as exc:
-        weather_note = f"Live weather unavailable, using historical averages: {exc}"
-
 state_data = {}
-live_days = {}
 try:
     for name, (forecast_month, state_model) in monthly_state_data.items():
         gas_day_forecast = forecast_month[
@@ -270,20 +156,18 @@ try:
         ].copy()
         if gas_day_forecast.empty:
             raise ValueError(f"No gas-day forecast is available for {gas_day} in {name}.")
-        gas_day_forecast, live_days[name] = xt.apply_live_weather(
-            gas_day_forecast.reset_index(drop=True), weather_by_state.get(name)
-        )
-        state_data[name] = (gas_day_forecast, state_model)
+        state_data[name] = (gas_day_forecast.reset_index(drop=True), state_model)
 except ValueError as exc:
     st.error(str(exc))
     st.stop()
 
 sample_nominations = fc.build_sample_nominations(state_data)
-all_nominations = fc.merge_uploaded_nominations(sample_nominations, uploaded_nominations)
+all_nominations = sample_nominations
 nomination_summary = fc.build_nomination_summary(state_data, all_nominations)
 customer_breakdown = fc.build_sample_customer_breakdown(state_data, all_nominations)
 month_df, model = state_data[state]
 full_month_df = monthly_state_data[state][0].copy()
+customer_nomination_history = load_customer_nomination_history()
 
 baseline_by_state = pd.DataFrame(
     [
@@ -344,7 +228,7 @@ except Exception:
     pass
 
 state_nominations = all_nominations[all_nominations["state"] == state][
-    ["date", "nominated_dth", "source"]
+    ["date", "nominated_dth"]
 ]
 nominated_daily = state_nominations["nominated_dth"].to_numpy()
 forecast_minus_nominated = base_daily - nominated_daily
@@ -364,25 +248,16 @@ daily_table["Forecast minus nominated (Dth/day)"] = (
 daily_table = daily_table.rename(
     columns={
         "nominated_dth": "Actual nominations (Dth/day)",
-        "source": "Nominations source",
         "Forecast minus nominated (Dth/day)": "Forecast minus actual nominations (Dth/day)",
     }
 )
 
-report = fc.build_report(model, month_df, extra_scenarios)
+report = fc.build_report(model, month_df)
 
 # ---------------- Header and alerts ----------------
 st.title("NiSource Gas Forecast Planner")
 st.caption("An AI critic that tries to break the demand forecast before it goes to suppliers.")
 st.caption(f"Model training data available through {training_cutoff:%Y-%m-%d}.")
-if weather_note:
-    st.warning(weather_note)
-if use_live_weather and not weather_note and live_days.get(state, 0) == 0:
-    st.info(
-        "Live weather covers the next 16 days only. This gas day uses the "
-        "historical-average temperature."
-    )
-
 for _, row in nomination_summary.iterrows():
     if abs(row["Gap (%)"]) > alert_threshold:
         st.error(
@@ -391,11 +266,10 @@ for _, row in nomination_summary.iterrows():
             f"versus nominations for {gas_day}."
         )
 
-tab_forecast, tab_risk, tab_sim, tab_track, tab_chat, tab_export = st.tabs(
+tab_forecast, tab_risk, tab_track, tab_chat, tab_export = st.tabs(
     [
         "Forecast",
         "Risks and warnings",
-        "Scenarios and simulation",
         "Tracking and data",
         "Ask the forecast",
         "Export",
@@ -438,7 +312,7 @@ with tab_forecast:
         use_container_width=True,
     )
     st.subheader(f"Gas-day forecast, {state}, {gas_day}")
-    st.caption("Temperature estimates use historical averages unless live weather is on.")
+    st.caption("Temperature estimates use historical averages.")
     st.dataframe(
         daily_baseline_by_state[
             (daily_baseline_by_state["State"] == state)
@@ -450,7 +324,7 @@ with tab_forecast:
     st.subheader(f"Actual nominations by state, Gas Day {gas_day}")
     st.caption(
         "Sample nominations are generated from each state's forecast with repeatable "
-        "variation of up to 4%. Rows marked Uploaded come from your file."
+        "variation of up to 4%."
     )
     st.dataframe(
         nomination_summary.style.format(
@@ -512,10 +386,6 @@ with tab_forecast:
         {"Series": "What-if forecast", "Dth/day": float(whatif_daily[0])},
         {"Series": "Nominations", "Dth/day": float(nominated_daily[0])},
     ]
-    if show_actual and pd.notna(month_df["usage"].iloc[0]):
-        bars.append(
-            {"Series": "Actual usage (hindsight)", "Dth/day": float(month_df["usage"].iloc[0])}
-        )
     bar_chart = (
         alt.Chart(pd.DataFrame(bars))
         .mark_bar()
@@ -548,21 +418,58 @@ with tab_forecast:
     )
 
 # ======================= Tab 2: Risks and warnings =======================
+customer_risk = fc.build_customer_nomination_guidance(
+    customer_nomination_history,
+    state,
+    base_total,
+    gas_day,
+)
 allowed_extra = [
     base_total, whatif_total, temp_shift, float(nominated_daily[0]),
     *[s["temp_shift"] for s in rt.SCENARIOS],
-    *[s["temp_shift"] for s in extra_scenarios],
 ]
+customer_warning_numbers = customer_risk[
+    [
+        "Historical median (Dth/day)",
+        "Recent P10 (Dth/day)",
+        "Recent P90 (Dth/day)",
+        "Historical variation (P10-P90, %)",
+        "Forecast-based schedule target (Dth/day)",
+        "Target minus historical median (Dth/day)",
+    ]
+].to_numpy().flatten().tolist()
 
 with tab_risk:
     st.subheader(f"Risks to the {gas_day} forecast, {state}")
     st.caption(
         "Scenario impacts apply their assumed temperature and demand changes to "
-        "this gas day only. Custom scenarios from the sidebar are included."
+        "this gas day only."
     )
     st.dataframe(
         report.rename(
             columns={"forecast_dth": "Forecast (Dth/day)", "change_dth": "Change (Dth/day)"}
+        ),
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    st.subheader(f"Customer nomination gaps, {state}, Gas Day {gas_day}")
+    st.caption(
+        "Recommendations allocate the state forecast using each sample customer's "
+        "average share of nominations over the prior 90 days and compare that target "
+        "with the customer's recent P10-P90 nomination range. The history is synthetic "
+        "and illustrative, not actual customer records or operating nominations."
+    )
+    st.dataframe(
+        customer_risk.style.format(
+            {
+                "Historical median (Dth/day)": "{:,.1f}",
+                "Recent P10 (Dth/day)": "{:,.1f}",
+                "Recent P90 (Dth/day)": "{:,.1f}",
+                "Historical variation (P10-P90, %)": "{:,.1f}",
+                "Forecast-based schedule target (Dth/day)": "{:,.1f}",
+                "Target minus historical median (Dth/day)": "{:+,.1f}",
+            }
         ),
         hide_index=True,
         use_container_width=True,
@@ -576,21 +483,59 @@ with tab_risk:
     st.subheader("Analyst warning")
     if st.button("Generate warning"):
         ex.TARGET_GAS_DAY = gas_day
+        customer_data = customer_risk.to_csv(index=False)
+        prompt = (
+            ex.build_prompt(report, state=state, tone=tone)
+            + "\n\nCustomer-level scheduling review. The supplied nomination history "
+            "is synthetic and illustrative, not actual customer data. Review every "
+            "customer row and assess whether its forecast-based schedule target is "
+            "above, within, or below its recent P10-P90 range. Say whether the "
+            "provided suggestion follows from those figures and what the analyst "
+            "should verify before scheduling. Do not claim to confirm real-world "
+            "gas need, invent numbers, or change a target. This is an advisory "
+            "review, not operational approval. Include one concise review line for "
+            "each customer even if that exceeds the selected warning length.\n\n"
+            "Customer guidance:\n"
+            + customer_data
+        )
         with st.spinner("Asking the LLM..."):
-            text = ex.call_llm(ex.build_prompt(report, state=state, tone=tone))
+            text = ex.call_llm(prompt)
         source, error = "LLM", None
         if text is None:
             text = ex.template_warning(report, state=state)
             source, error = "built-in template", ex.LAST_ERROR
+        customer_lines = [
+            (
+                f"- {row['Customer / Scheduling Point']}: forecast-based schedule "
+                f"target {row['Forecast-based schedule target (Dth/day)']:,.1f} "
+                f"Dth/day; recent median "
+                f"{row['Historical median (Dth/day)']:,.1f} Dth/day, recent range "
+                f"{row['Recent P10 (Dth/day)']:,.1f}-"
+                f"{row['Recent P90 (Dth/day)']:,.1f} Dth/day "
+                f"({row['Historical variation (P10-P90, %)']:.1f}% variation). "
+                f"{row['Analyst suggestion']}"
+            )
+            for _, row in customer_risk.iterrows()
+        ]
+        text += (
+            "\n\nCustomer scheduling recommendations "
+            f"({state}, {gas_day}; based on synthetic illustrative history):\n"
+            + "\n".join(customer_lines)
+        )
         st.session_state["warning"] = (text, source, gas_day, state, error)
     saved = st.session_state.get("warning")
     if saved and saved[2:4] == (gas_day, state):
         st.write(saved[0])
         st.caption(f"Written by: {saved[1]}")
         if saved[4]:
-            st.warning(f"LLM not used: {saved[4]}")
+            st.warning(
+                "AI review unavailable; customer suggestions are rules-based. "
+                f"LLM error: {saved[4]}"
+            )
         if saved[1] == "LLM":
-            unsupported = ex.check_numbers(saved[0], report, allowed_extra)
+            unsupported = ex.check_numbers(
+                saved[0], report, [*allowed_extra, *customer_warning_numbers]
+            )
             if unsupported:
                 st.warning(
                     "Fact check: these numbers were not found in the data, please verify: "
@@ -598,6 +543,10 @@ with tab_risk:
                 )
             else:
                 st.success("Fact check: every number in this warning matches the data.")
+            st.caption(
+                "LLM review is advisory and uses synthetic historical nominations; "
+                "it is not an operational confirmation or authorization."
+            )
         if xt.notifications_configured():
             if st.button("Send this warning to Teams / email"):
                 for line in xt.notify(f"Gas forecast warning: {state}, {gas_day}", saved[0]):
@@ -609,7 +558,7 @@ with tab_risk:
     if st.button("Generate briefing for all states"):
         ex.TARGET_GAS_DAY = gas_day
         reports = {
-            name: fc.build_report(m, d, extra_scenarios)
+            name: fc.build_report(m, d)
             for name, (d, m) in state_data.items()
         }
         with st.spinner("Asking the LLM..."):
@@ -642,88 +591,7 @@ with tab_risk:
             "and EMAIL_TO (plus SMTP_PORT, SMTP_USER, SMTP_PASSWORD) before starting the app."
         )
 
-# ======================= Tab 3: Scenarios and simulation =======================
-with tab_sim:
-    st.subheader(f"Sensitivity to temperature, {state}, {gas_day}")
-    with safe("Sensitivity chart"):
-        sens = xt.sensitivity_table(model, month_df)
-        line = alt.Chart(sens).mark_line().encode(
-            x="Temperature shift (F):Q",
-            y=alt.Y("Forecast (Dth/day):Q", scale=alt.Scale(zero=False)),
-            tooltip=[
-                "Temperature shift (F)",
-                alt.Tooltip("Forecast (Dth/day):Q", format=",.1f"),
-            ],
-        )
-        nom_rule = alt.Chart(pd.DataFrame({"y": [float(nominated_daily[0])]})).mark_rule(
-            strokeDash=[5, 5], color="red"
-        ).encode(y="y:Q")
-        st.altair_chart(line + nom_rule, use_container_width=True)
-        st.caption("The dashed red line is the nominations. Where the curve crosses it, demand equals nominations.")
-
-    st.subheader("Weather risk simulation (Monte Carlo)")
-    with safe("Monte Carlo simulation"):
-        m1, m2, m3 = st.columns(3)
-        runs = m1.slider("Simulated days", 200, 5000, 1000, step=100)
-        temp_sigma = m2.slider("Temperature error, 1 std dev (F)", 1.0, 15.0, 6.0, 0.5)
-        demand_sigma = m3.slider("Other demand noise, 1 std dev (%)", 0.0, 10.0, 3.0, 0.5)
-        sims = xt.monte_carlo(model, month_df, runs, temp_sigma, demand_sigma)
-        nom = float(nominated_daily[0])
-        p_over = float((sims > nom).mean() * 100)
-        p_over5 = float((sims > nom * 1.05).mean() * 100)
-        s1, s2, s3, s4 = st.columns(4)
-        s1.metric("Chance demand exceeds nominations", f"{p_over:.0f}%")
-        s2.metric("Chance it exceeds by 5%+", f"{p_over5:.0f}%")
-        s3.metric("Average simulated demand", f"{sims.mean():,.1f} Dth")
-        s4.metric("95th percentile", f"{np.percentile(sims, 95):,.1f} Dth")
-        hist = alt.Chart(pd.DataFrame({"Demand (Dth/day)": sims})).mark_bar().encode(
-            x=alt.X("Demand (Dth/day):Q", bin=alt.Bin(maxbins=40)),
-            y=alt.Y("count():Q", title="Simulated days"),
-        )
-        rule = alt.Chart(pd.DataFrame({"x": [nom]})).mark_rule(color="red", size=2).encode(x="x:Q")
-        st.altair_chart(hist + rule, use_container_width=True)
-        st.caption(
-            "The temperature and noise spreads are assumptions you can change, not fitted values. "
-            "The red line is the nominations."
-        )
-
-    st.subheader(f"Scenarios across the month, {state}")
-    with safe("Multi-day scenario view"):
-        month_dates = full_month_df["date"].dt.strftime("%Y-%m-%d").tolist()
-        start, end = st.select_slider(
-            "Date range", options=month_dates, value=(month_dates[0], month_dates[-1])
-        )
-        window = full_month_df[
-            (full_month_df["date"] >= pd.Timestamp(start))
-            & (full_month_df["date"] <= pd.Timestamp(end))
-        ]
-        matrix = xt.scenario_matrix(window, model, list(rt.SCENARIOS) + list(extra_scenarios))
-        heat = alt.Chart(matrix).mark_rect().encode(
-            x=alt.X("Gas Day:O"),
-            y=alt.Y("Scenario:N", title=None),
-            color=alt.Color("Change (%):Q", scale=alt.Scale(scheme="redyellowblue", reverse=True)),
-            tooltip=["Gas Day", "Scenario", "Change (%)", "Change (Dth/day)"],
-        )
-        st.altair_chart(heat, use_container_width=True)
-        st.caption("Uses historical-average temperatures for every day in the range.")
-
-    st.subheader("Model comparison")
-    with safe("Model comparison"):
-        st.caption(
-            "Trains three candidate models on data before 2024 and tests them on 2024 days. "
-            "This is independent of the app's own model and does not change the forecast."
-        )
-        if st.button("Run model comparison"):
-            with st.spinner("Training candidate models..."):
-                st.session_state["model_compare"] = (
-                    state, xt.compare_models(df[df["state"] == state].copy())
-                )
-        result = st.session_state.get("model_compare")
-        if result and result[0] == state:
-            st.dataframe(result[1], hide_index=True, use_container_width=True)
-            st.caption("Lower MAPE and RMSE are better.")
-
-# ======================= Tab 4: Tracking and data =======================
+# ======================= Tab 3: Tracking and data =======================
 with tab_track:
     st.subheader(f"Forecast vs actual usage, {state}, {month}")
     with safe("Forecast tracking"):
@@ -762,7 +630,7 @@ with tab_track:
                 use_container_width=True,
             )
 
-    st.subheader("Data and connection status")
+    st.subheader("Data status")
     status_rows = []
     for name in required_states:
         sub = df[df["state"] == name]
@@ -772,24 +640,32 @@ with tab_track:
                 "Rows": len(sub),
                 "First date": sub["date"].min().strftime("%Y-%m-%d"),
                 "Latest date": sub["date"].max().strftime("%Y-%m-%d"),
-                "Live weather days used": live_days.get(name, 0),
             }
         )
     st.dataframe(pd.DataFrame(status_rows), hide_index=True, use_container_width=True)
-    st.caption(
-        f"Live weather: {'on' if use_live_weather else 'off'}. "
-        f"LLM key: {'found' if os.environ.get('LLM_API_KEY') else 'not set'}. "
-        f"LLM model: {ex.MODEL}. Nominations: "
-        f"{'uploaded file' if uploaded_nominations is not None else 'generated samples'}."
-    )
-
     with st.expander("Proof: how wrong was the plain forecast in 2024?"):
         with safe("Backtest"):
             bt = cached_backtest(state)
             st.bar_chart(bt.set_index("month")["error_pct"])
             st.dataframe(bt, hide_index=True)
 
-# ======================= Tab 5: Ask the forecast =======================
+    st.subheader("Model comparison")
+    with safe("Model comparison"):
+        st.caption(
+            "Trains three candidate models on data before 2024 and tests them on 2024 days. "
+            "This is independent of the app's own model and does not change the forecast."
+        )
+        if st.button("Run model comparison"):
+            with st.spinner("Training candidate models..."):
+                st.session_state["model_compare"] = (
+                    state, xt.compare_models(df[df["state"] == state].copy())
+                )
+        result = st.session_state.get("model_compare")
+        if result and result[0] == state:
+            st.dataframe(result[1], hide_index=True, use_container_width=True)
+            st.caption("Lower MAPE and RMSE are better.")
+
+# ======================= Tab 4: Ask the forecast =======================
 with tab_chat:
     st.subheader("Ask the forecast")
     st.caption(
@@ -840,7 +716,7 @@ with tab_chat:
         st.session_state[chat_key] = []
         st.rerun()
 
-# ======================= Tab 6: Export =======================
+# ======================= Tab 5: Export =======================
 with tab_export:
     st.subheader("Export")
     warning_text = ""

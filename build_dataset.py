@@ -1,5 +1,6 @@
 """
-Builds gas_data.csv: real daily temperatures (Open-Meteo) + illustrative synthetic gas usage in Dth/day.
+Builds gas_data.csv and customer_nomination_history.csv. Gas usage and customer
+nominations are illustrative synthetic data; only downloaded temperatures may be real.
 
 Run on a machine with internet:  python build_dataset.py
 If the download fails (e.g. blocked network), it falls back to synthetic
@@ -25,7 +26,10 @@ END = min(
     pd.Timestamp.now().normalize() - pd.Timedelta(days=1),
 ).strftime("%Y-%m-%d")
 OUT_FILE = "gas_data.csv"
+NOMINATION_OUT_FILE = "customer_nomination_history.csv"
 SEED = 42
+CUSTOMER_SHARES = (0.35, 0.25, 0.20, 0.12, 0.08)
+CUSTOMER_VOLATILITY = (0.03, 0.05, 0.08, 0.10, 0.14)
 # ---------------------------------
 
 
@@ -89,6 +93,47 @@ def add_usage(df, seed=SEED):
     return df
 
 
+def build_customer_nomination_history(usage_data, seed=SEED):
+    """Create illustrative customer nominations from the synthetic usage series."""
+    required = {"date", "state", "usage"}
+    missing = required - set(usage_data.columns)
+    if missing:
+        raise ValueError(
+            "Usage data is missing required columns: " + ", ".join(sorted(missing))
+        )
+
+    frames = []
+    for state_index, (state, state_data) in enumerate(
+        usage_data.groupby("state", sort=True)
+    ):
+        state_data = state_data.sort_values("date").reset_index(drop=True)
+        rng = np.random.default_rng(seed + state_index)
+        season = 0.025 * np.sin(
+            2 * np.pi * state_data["date"].dt.dayofyear.to_numpy() / 365.25
+        )
+        for customer_index, (share, volatility) in enumerate(
+            zip(CUSTOMER_SHARES, CUSTOMER_VOLATILITY), start=1
+        ):
+            customer_bias = (customer_index - 3) * 0.015
+            variation = rng.normal(0, volatility, len(state_data))
+            nominated = (
+                state_data["usage"].to_numpy()
+                * share
+                * np.maximum(0.5, 1 + customer_bias + season + variation)
+            )
+            frames.append(
+                pd.DataFrame(
+                    {
+                        "date": state_data["date"].to_numpy(),
+                        "state": state,
+                        "customer": f"Sample Customer {customer_index}",
+                        "nominated_dth": nominated.round(1),
+                    }
+                )
+            )
+    return pd.concat(frames, ignore_index=True)
+
+
 def main():
     state_data = []
     for index, (state, (latitude, longitude, temperature_offset)) in enumerate(
@@ -113,6 +158,12 @@ def main():
     df = df[["date", "state", "temp_f", "is_holiday", "usage"]]
     df.to_csv(OUT_FILE, index=False)
     print(f"Saved {len(df)} rows for {len(LOCATIONS)} states to {OUT_FILE}")
+    nominations = build_customer_nomination_history(df)
+    nominations.to_csv(NOMINATION_OUT_FILE, index=False)
+    print(
+        f"Saved {len(nominations)} illustrative rows to {NOMINATION_OUT_FILE}. "
+        "These are synthetic, not historical customer nominations."
+    )
     print(df.head())
     print("Correlation between temp and usage:", round(df["temp_f"].corr(df["usage"]), 3))
 

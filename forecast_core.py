@@ -75,24 +75,6 @@ def build_sample_nominations(state_data):
     return pd.concat(frames, ignore_index=True)
 
 
-def merge_uploaded_nominations(sample, uploaded):
-    """Replace sample nominations with uploaded ones where dates and states match."""
-    out = sample.copy()
-    out["date"] = pd.to_datetime(out["date"]).dt.normalize()
-    out["source"] = "Sample (generated)"
-    if uploaded is None or uploaded.empty:
-        return out
-    merged = out.merge(
-        uploaded.rename(columns={"nominated_dth": "uploaded_dth"}),
-        on=["date", "state"],
-        how="left",
-    )
-    has_upload = merged["uploaded_dth"].notna()
-    merged.loc[has_upload, "nominated_dth"] = merged.loc[has_upload, "uploaded_dth"]
-    merged.loc[has_upload, "source"] = "Uploaded"
-    return merged.drop(columns="uploaded_dth")
-
-
 def build_nomination_summary(state_data, nominations):
     """Compare each state's selected gas-day forecast with its nominations."""
     rows = []
@@ -157,6 +139,101 @@ def build_sample_customer_breakdown(state_data, nominations):
                 }
             )
     return pd.DataFrame(rows)
+
+
+def build_customer_nomination_guidance(
+    history, state, forecast_dth, gas_day, history_days=90
+):
+    """Compare forecast-based customer targets with their recent nomination history."""
+    required = {"date", "state", "customer", "nominated_dth"}
+    missing = required - set(history.columns)
+    if missing:
+        raise ValueError(
+            "Nomination history is missing required columns: "
+            + ", ".join(sorted(missing))
+        )
+
+    target_date = pd.Timestamp(gas_day).normalize()
+    history = history.copy()
+    history["date"] = pd.to_datetime(history["date"]).dt.normalize()
+    recent = history.loc[
+        (history["state"] == state)
+        & (history["date"] < target_date)
+        & (history["date"] >= target_date - pd.Timedelta(days=history_days))
+    ].copy()
+    recent["nominated_dth"] = pd.to_numeric(
+        recent["nominated_dth"], errors="coerce"
+    )
+    recent = recent.dropna(subset=["customer", "nominated_dth"])
+    recent = recent.loc[recent["nominated_dth"] >= 0]
+    if recent.empty:
+        raise ValueError(
+            f"No prior customer nomination history is available for {state} "
+            f"within {history_days} days of {target_date:%Y-%m-%d}."
+        )
+
+    daily_totals = recent.groupby("date")["nominated_dth"].transform("sum")
+    recent["share"] = np.divide(
+        recent["nominated_dth"],
+        daily_totals,
+        out=np.zeros(len(recent), dtype=float),
+        where=daily_totals.to_numpy() > 0,
+    )
+    stats = recent.groupby("customer").agg(
+        history_days=("date", "nunique"),
+        mean_share=("share", "mean"),
+        median_nomination=("nominated_dth", "median"),
+        p10_nomination=("nominated_dth", lambda values: values.quantile(0.10)),
+        p90_nomination=("nominated_dth", lambda values: values.quantile(0.90)),
+    )
+    total_share = stats["mean_share"].sum()
+    if total_share <= 0:
+        raise ValueError(f"Nomination history for {state} has no positive daily totals.")
+    stats["mean_share"] /= total_share
+    stats["target_dth"] = (forecast_dth * stats["mean_share"]).round(1)
+    stats["target_minus_median"] = (
+        stats["target_dth"] - stats["median_nomination"]
+    ).round(1)
+    stats["variation_pct"] = np.where(
+        stats["median_nomination"] > 0,
+        (stats["p90_nomination"] - stats["p10_nomination"])
+        / stats["median_nomination"] * 100,
+        0.0,
+    )
+
+    def suggestion(row):
+        target = row["target_dth"]
+        if target > row["p90_nomination"]:
+            return (
+                f"Plan about {target:,.1f} Dth/day; this is above the recent "
+                "nomination range. Confirm the demand increase and supply capacity."
+            )
+        if target < row["p10_nomination"]:
+            return (
+                f"Plan about {target:,.1f} Dth/day; this is below the recent "
+                "nomination range. Confirm the expected demand reduction before "
+                "lowering scheduled supply."
+            )
+        return (
+            f"Plan about {target:,.1f} Dth/day; this is within the recent "
+            "nomination range. Monitor the final forecast and nomination."
+        )
+
+    stats["suggestion"] = stats.apply(suggestion, axis=1)
+    result = stats.reset_index().rename(
+        columns={
+            "customer": "Customer / Scheduling Point",
+            "history_days": "History days",
+            "median_nomination": "Historical median (Dth/day)",
+            "p10_nomination": "Recent P10 (Dth/day)",
+            "p90_nomination": "Recent P90 (Dth/day)",
+            "variation_pct": "Historical variation (P10-P90, %)",
+            "target_dth": "Forecast-based schedule target (Dth/day)",
+            "target_minus_median": "Target minus historical median (Dth/day)",
+            "suggestion": "Analyst suggestion",
+        }
+    )
+    return result.drop(columns="mean_share")
 
 
 def build_report(model, gas_day_df, extra_scenarios=()):
