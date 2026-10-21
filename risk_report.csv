@@ -1,0 +1,22 @@
+state,scenario,forecast_dth,change_dth,change_pct
+Ohio,Colder month overall (-5F),3687.0,393.0,11.9
+Ohio,Warmer month overall (+5F),2901.0,-393.0,-11.9
+Ohio,Large customers use 8% less (assumed),3030.0,-264.0,-8.0
+Ohio,Large customers use 8% more (assumed),3558.0,264.0,8.0
+Ohio,Warm spell (+8F for 7 days),3147.0,-147.0,-4.5
+Ohio,Cold snap (-10F for 5 days),3425.0,131.0,4.0
+Ohio,Extended holiday slowdown (-15% for 4 days),3221.0,-73.0,-2.2
+Pennsylvania,Colder month overall (-5F),3931.0,393.0,11.1
+Pennsylvania,Warmer month overall (+5F),3144.0,-393.0,-11.1
+Pennsylvania,Large customers use 8% less (assumed),3255.0,-283.0,-8.0
+Pennsylvania,Large customers use 8% more (assumed),3821.0,283.0,8.0
+Pennsylvania,Warm spell (+8F for 7 days),3391.0,-147.0,-4.2
+Pennsylvania,Cold snap (-10F for 5 days),3669.0,131.0,3.7
+Pennsylvania,Extended holiday slowdown (-15% for 4 days),3460.0,-78.0,-2.2
+Virginia,Colder month overall (-5F),3499.0,393.0,12.6
+Virginia,Warmer month overall (+5F),2714.0,-393.0,-12.6
+Virginia,Large customers use 8% less (assumed),2858.0,-249.0,-8.0
+Virginia,Large customers use 8% more (assumed),3355.0,249.0,8.0
+Virginia,Warm spell (+8F for 7 days),2960.0,-147.0,-4.7
+Virginia,Cold snap (-10F for 5 days),3237.0,131.0,4.2
+Virginia,Extended holiday slowdown (-15% for 4 days),3041.0,-66.0,-2.1
