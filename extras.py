@@ -1,11 +1,9 @@
 """
 Extra features for the Gas Forecast app (no Streamlit in here):
 live weather, uncertainty range, Monte Carlo, sensitivity, multi-day scenarios,
-nomination uploads, model comparison, Excel/PDF export, email/Teams alerts,
-and saved scenarios.
+model comparison, Excel/PDF export, and email/Teams alerts.
 """
 import io
-import json
 import os
 import smtplib
 from email.message import EmailMessage
@@ -21,9 +19,6 @@ STATE_COORDS = {
     "Virginia": (37.54, -77.44),
     "Pennsylvania": (40.27, -76.88),
 }
-SCENARIO_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saved_scenarios.json")
-
-
 # ------------------------------------------------------------ weather
 def hdd(temp_f, base=65.0):
     """Heating degree days for a daily mean temperature in F."""
@@ -139,39 +134,6 @@ def scenario_matrix(month_df, model, scenarios):
             )
         )
     return pd.concat(rows, ignore_index=True)
-
-
-# ------------------------------------------------------------ uploads
-def parse_uploaded_nominations(file_obj, filename):
-    """Read a CSV/Excel with columns date, state, nominated_dth."""
-    if filename.lower().endswith((".xlsx", ".xls")):
-        raw = pd.read_excel(file_obj)
-    else:
-        raw = pd.read_csv(file_obj)
-    cols = {c.lower().strip().replace(" ", "_"): c for c in raw.columns}
-    date_col = next((cols[k] for k in ("date", "gas_day") if k in cols), None)
-    state_col = cols.get("state")
-    nom_col = next(
-        (
-            cols[k]
-            for k in ("nominated_dth", "nominations", "nomination", "nominated")
-            if k in cols
-        ),
-        None,
-    )
-    if not (date_col and state_col and nom_col):
-        raise ValueError(
-            "The file needs three columns: date, state, nominated_dth "
-            f"(found: {', '.join(map(str, raw.columns))})."
-        )
-    out = pd.DataFrame(
-        {
-            "date": pd.to_datetime(raw[date_col]).dt.normalize(),
-            "state": raw[state_col].astype(str).str.strip().str.title(),
-            "nominated_dth": pd.to_numeric(raw[nom_col], errors="coerce"),
-        }
-    ).dropna()
-    return out
 
 
 # ------------------------------------------------------------ model comparison
@@ -305,19 +267,3 @@ def notify(subject, text):
         except Exception as exc:
             results.append(f"Email: failed ({exc})")
     return results or ["No notification channel is configured."]
-
-
-# ------------------------------------------------------------ saved scenarios
-def load_saved_scenarios():
-    try:
-        with open(SCENARIO_FILE, encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return {}
-
-
-def save_scenario(name, temp_shift, custom_scenarios):
-    data = load_saved_scenarios()
-    data[name] = {"temp_shift": int(temp_shift), "custom_scenarios": custom_scenarios}
-    with open(SCENARIO_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
