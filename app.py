@@ -26,7 +26,7 @@ import extras as xt
 import forecast_core as fc
 import red_team as rt
 
-st.set_page_config(page_title="Nisource Gas Forecast", layout="wide")
+st.set_page_config(page_title="NiSource Gas Forecast Planner", layout="wide")
 
 
 # ---------------- Optional password gate ----------------
@@ -174,6 +174,7 @@ gas_day = st.sidebar.date_input(
     max_value=pd.Timestamp(gas_days[-1]).date(),
     key="sel_gas_day",
 )
+gas_day = pd.Timestamp(gas_day).strftime("%Y-%m-%d")
 selected_gas_day = pd.Timestamp(gas_day)
 month = str(selected_gas_day.to_period("M"))
 show_actual = st.sidebar.checkbox("Show what actually happened (hindsight)", value=False)
@@ -280,6 +281,7 @@ except ValueError as exc:
 sample_nominations = fc.build_sample_nominations(state_data)
 all_nominations = fc.merge_uploaded_nominations(sample_nominations, uploaded_nominations)
 nomination_summary = fc.build_nomination_summary(state_data, all_nominations)
+customer_breakdown = fc.build_sample_customer_breakdown(state_data, all_nominations)
 month_df, model = state_data[state]
 full_month_df = monthly_state_data[state][0].copy()
 
@@ -370,7 +372,7 @@ daily_table = daily_table.rename(
 report = fc.build_report(model, month_df, extra_scenarios)
 
 # ---------------- Header and alerts ----------------
-st.title("Nisource Gas Forecast")
+st.title("NiSource Gas Forecast Planner")
 st.caption("An AI critic that tries to break the demand forecast before it goes to suppliers.")
 st.caption(f"Model training data available through {training_cutoff:%Y-%m-%d}.")
 if weather_note:
@@ -457,6 +459,25 @@ with tab_forecast:
                 "Actual nominations (Dth/day)": "{:,.1f}",
                 "Forecast minus actual nominations (Dth/day)": "{:+,.1f}",
                 "Gap (%)": "{:+.1f}",
+            }
+        ),
+        hide_index=True,
+        use_container_width=True,
+    )
+    st.subheader(f"Customer forecast vs nominations, {state}, Gas Day {gas_day}")
+    st.caption(
+        "Sample Scheduling Point rows are illustrative, not real customer records. "
+        "The selected state's totals are allocated by fixed sample shares; use "
+        "customer-level data for actual customer comparisons."
+    )
+    st.dataframe(
+        customer_breakdown.loc[customer_breakdown["State"] == state]
+        .drop(columns="State")
+        .style.format(
+            {
+                "Forecast (Dth/day)": "{:,.1f}",
+                "Actual nominations (Dth/day)": "{:,.1f}",
+                "Difference (Dth/day)": "{:+,.1f}",
             }
         ),
         hide_index=True,
@@ -783,6 +804,9 @@ with tab_chat:
             baseline_by_state.round(1).to_csv(index=False),
             "Forecast versus nominations:",
             nomination_summary.round(1).to_csv(index=False),
+            "Illustrative customer forecast versus nominations "
+            "(allocated by sample shares, not customer-level actuals):",
+            customer_breakdown.round(1).to_csv(index=False),
             f"Scenario risks for {state}:",
             ex.report_as_text(report),
             "",
@@ -830,6 +854,7 @@ with tab_export:
         sheets = {
             "Forecast by state": baseline_by_state,
             "Nominations": nomination_summary,
+            "Customer detail": customer_breakdown,
             "Daily detail": daily_table,
             "Risks": report,
         }
@@ -847,6 +872,11 @@ with tab_export:
         sections = [
             ("Forecast by state (Dth/day)", baseline_by_state.round(1).to_string(index=False), True),
             ("Forecast versus nominations", nomination_summary.round(1).to_string(index=False), True),
+            (
+                "Illustrative customer detail (Dth/day)",
+                customer_breakdown.round(1).to_string(index=False),
+                True,
+            ),
             (f"Scenario risks, {state}", report.to_string(index=False), True),
         ]
         if warning_text:
@@ -854,8 +884,13 @@ with tab_export:
         if briefing_text:
             sections.append(("Briefing for all states", briefing_text, False))
         sections.append(
-            ("Notes", "Gas usage and sample nominations are synthetic and illustrative. "
-             "Scenarios marked 'assumed' are assumptions, not measured facts.", False)
+            (
+                "Notes",
+                "Gas usage, sample nominations, and customer allocations are synthetic "
+                "and illustrative. Scenarios marked 'assumed' are assumptions, not "
+                "measured facts.",
+                False,
+            )
         )
         st.download_button(
             "Download PDF report",

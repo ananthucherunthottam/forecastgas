@@ -116,6 +116,49 @@ def build_nomination_summary(state_data, nominations):
     return pd.DataFrame(rows)
 
 
+def build_sample_customer_breakdown(state_data, nominations):
+    """Allocate each state's forecast and nominations to illustrative customers."""
+    customer_shares = (0.35, 0.25, 0.20, 0.12, 0.08)
+    rows = []
+    for state, (gas_day_df, model) in state_data.items():
+        gas_day = pd.Timestamp(gas_day_df["date"].iloc[0]).normalize()
+        state_nominations = nominations[
+            (nominations["state"] == state)
+            & (pd.to_datetime(nominations["date"]).dt.normalize() == gas_day)
+        ]
+        if state_nominations.empty:
+            raise ValueError(f"No nominations are available for {state} on {gas_day:%Y-%m-%d}.")
+
+        forecast = float(
+            daily_forecast(model, gas_day_df, np.zeros(len(gas_day_df)))[0]
+        )
+        nominated = float(state_nominations["nominated_dth"].iloc[0])
+
+        def allocate(total):
+            total = round(total, 1)
+            amounts = [round(total * share, 1) for share in customer_shares]
+            amounts[-1] = round(total - sum(amounts[:-1]), 1)
+            return amounts
+
+        customer_forecasts = allocate(forecast)
+        customer_nominations = allocate(nominated)
+        for index, (customer_forecast, customer_nomination) in enumerate(
+            zip(customer_forecasts, customer_nominations), start=1
+        ):
+            rows.append(
+                {
+                    "State": state,
+                    "Company / Scheduling Point": f"Sample Scheduling Point {index}",
+                    "Forecast (Dth/day)": customer_forecast,
+                    "Actual nominations (Dth/day)": customer_nomination,
+                    "Difference (Dth/day)": round(
+                        customer_forecast - customer_nomination, 1
+                    ),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
 def build_report(model, gas_day_df, extra_scenarios=()):
     """Calculate scenario impacts for the selected gas day.
 
